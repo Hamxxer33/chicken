@@ -1,0 +1,12 @@
+{
+  "name": "chicken",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/chicken.test.js"
+  }
+}
