@@ -1,10 +1,29 @@
 import { ageLabel, estimateJoined } from "./age.js";
 import { RULES, milestoneBonus, referralShare, scoreParts } from "./points.js";
 
-// Tasks go here once the bot is live. Each one looks like:
-// { id: "channel", title: "Join the channel", detail: "Open it, then collect.", reward: 500 }
+// Each task pays once. A task with `chat` pays only after Telegram confirms the
+// player is a member, so the bot has to be an admin of that group or channel.
 // Add `requires: "<other id>"` to unlock a task only after another one.
-const TASKS = [];
+const TASKS = [
+  {
+    id: "group",
+    title: "Join the Chicken group",
+    detail: "Join @chickenyxz, then come back and collect.",
+    reward: 3_000,
+    chat: "chickenyxz",
+  },
+  {
+    id: "channel",
+    title: "Join the Chicken channel",
+    detail: "Join @chickenxzy, then come back and collect.",
+    reward: 3_000,
+    chat: "chickenxzy",
+  },
+];
+
+export function findTask(taskId) {
+  return TASKS.find((item) => item.id === taskId) || null;
+}
 
 function rowToUser(row) {
   if (!row) return null;
@@ -67,6 +86,7 @@ export function present(db, id, { botUsername = "" } = {}) {
     title: task.title,
     detail: task.detail,
     reward: task.reward,
+    url: task.chat ? `https://t.me/${task.chat}` : "",
     done: done.has(task.id),
     locked: Boolean(task.requires && !done.has(task.requires)),
   }));
@@ -207,7 +227,7 @@ export function claimTask(db, userId, taskId, { botUsername = "" } = {}) {
     error.status = 404;
     throw error;
   }
-  const task = TASKS.find((item) => item.id === taskId);
+  const task = findTask(taskId);
   if (!task) {
     const error = new Error("Unknown task.");
     error.status = 400;

@@ -81,3 +81,15 @@ export async function configureBot(token, webAppUrl) {
     });
   }
 }
+
+// Needs the bot to be an admin of a channel, or a member of a group.
+export async function isChatMember(token, chat, userId) {
+  const data = await telegram(token, "getChatMember", { chat_id: `@${chat}`, user_id: userId });
+  if (!data.ok) {
+    const error = new Error(`getChatMember @${chat}: ${data.description || "failed"}`);
+    error.unverifiable = true;
+    throw error;
+  }
+  const { status, is_member: isMember } = data.result;
+  return ["creator", "administrator", "member"].includes(status) || (status === "restricted" && isMember);
+}
