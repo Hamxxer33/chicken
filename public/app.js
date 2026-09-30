@@ -1,20 +1,7 @@
-const PRESETS = [
-  { id: 2768409, label: "2013" },
-  { id: 171295414, label: "2016" },
-  { id: 400169472, label: "2017" },
-  { id: 805158066, label: "2019" },
-  { id: 1974255900, label: "2021" },
-  { id: 5520018289, label: "2024" },
-  { id: 8300000000, label: "New" },
-];
-
 const state = {
   tg: window.Telegram?.WebApp,
   config: null,
-  params: new URLSearchParams(location.search),
-  account: { id: 171295414, firstName: "Ada", username: "ada", isPremium: false },
   profile: null,
-  ton: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -52,14 +39,7 @@ function show(name) {
 }
 
 function authBody() {
-  if (state.tg?.initData) return { initData: state.tg.initData };
-  return {
-    dev: true,
-    id: state.account.id,
-    firstName: state.account.firstName,
-    username: state.account.username || "",
-    isPremium: state.account.isPremium,
-  };
+  return { initData: state.tg?.initData || "" };
 }
 
 async function api(path, body) {
@@ -71,42 +51,6 @@ async function api(path, body) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || "Request failed.");
   return data;
-}
-
-function mountDevBar() {
-  const bar = $("#devbar");
-  bar.hidden = false;
-  bar.innerHTML = `
-    <span>Preview</span>
-    <select id="preset" aria-label="Account age">
-      ${PRESETS.map((preset) => `<option value="${preset.id}" ${preset.id === state.account.id ? "selected" : ""}>${esc(preset.label)}</option>`).join("")}
-    </select>
-    <label><input id="premium" type="checkbox" /> Premium</label>
-  `;
-  $("#preset").addEventListener("change", async (event) => {
-    state.account.id = Number(event.target.value);
-    sessionStorage.setItem("chicken-id", String(state.account.id));
-    await reloadPreview();
-  });
-  $("#premium").addEventListener("change", async (event) => {
-    state.account.isPremium = event.target.checked;
-    await reloadPreview();
-  });
-}
-
-async function reloadPreview() {
-  try {
-    const peek = await api("/api/session", { ...authBody(), create: false });
-    if (peek.fresh) {
-      $("#go").disabled = false;
-      show("intro");
-      return;
-    }
-    state.profile = peek;
-    showMain("home", false);
-  } catch (error) {
-    toast(error.message);
-  }
 }
 
 async function playScan(work) {
@@ -128,14 +72,13 @@ async function letsGo() {
   button.disabled = true;
   try {
     const profile = await playScan(() => api("/api/session", { ...authBody(), create: true }));
-    sessionStorage.setItem("chicken-id", String(profile.user.id));
     state.profile = profile;
     showMain("home", true);
     state.tg?.HapticFeedback?.notificationOccurred("success");
   } catch (error) {
     toast(error.message);
     button.disabled = false;
-    show(state.tg?.initData || state.config.dev ? "intro" : "gate");
+    show(state.tg?.initData ? "intro" : "gate");
   }
 }
 
@@ -192,36 +135,21 @@ function render() {
     <p class="note">Chicken points live in this coop. They are not a listed coin.</p>
   `;
 
-  $("#panel-tasks").innerHTML = tasks
-    .map((task) => {
-      const needsTap =
-        ((task.id === "channel" && state.config.channel) || task.id === "share") &&
-        !task.done &&
-        sessionStorage.getItem(`chicken-${task.id}`) !== "1";
-      const action =
-        task.id === "wallet" && !task.done
-          ? `<button class="yolk" type="button" data-action="wallet">Connect wallet</button>`
-          : task.done
+  $("#panel-tasks").innerHTML = tasks.length
+    ? tasks
+        .map((task) => {
+          const action = task.done
             ? `<span class="done-flag">Collected</span>`
-            : `<button class="yolk" type="button" data-action="claim" data-task="${esc(task.id)}" ${task.locked || needsTap ? "disabled" : ""}>Collect ${fmt(task.reward)}</button>`;
-      const opener =
-        task.id === "channel" && state.config.channel && !task.done
-          ? `<button class="ghost" type="button" data-action="open-channel">Open channel</button>`
-          : task.id === "share" && !task.done
-            ? `<button class="ghost" type="button" data-action="share">Share</button>`
-            : "";
-      const preview =
-        task.id === "wallet" && !task.done && state.config.dev
-          ? `<button class="ghost" type="button" data-action="simulate-wallet">Preview wallet</button>`
-          : "";
-      return `
-        <article class="card">
-          <h3>${esc(task.title)} <span class="reward">+${fmt(task.reward)}</span></h3>
-          <p>${esc(task.detail)}</p>
-          <div class="actions">${opener}${action}${preview}</div>
-        </article>`;
-    })
-    .join("");
+            : `<button class="yolk" type="button" data-action="claim" data-task="${esc(task.id)}" ${task.locked ? "disabled" : ""}>Collect ${fmt(task.reward)}</button>`;
+          return `
+            <article class="card">
+              <h3>${esc(task.title)} <span class="reward">+${fmt(task.reward)}</span></h3>
+              <p>${esc(task.detail)}</p>
+              <div class="actions">${action}</div>
+            </article>`;
+        })
+        .join("")
+    : `<p class="note">Tasks are coming soon.</p>`;
 
   const eggs = Array.from({ length: 5 }, (_, index) => {
     const full = index < friends.count % 5;
@@ -250,11 +178,6 @@ function render() {
       }
     </article>
     <div class="rows">${friendRows}</div>
-    ${
-      state.config.dev
-        ? `<button class="ghost" type="button" data-action="hatch">Add a preview friend</button>`
-        : ""
-    }
   `;
 }
 
@@ -271,109 +194,13 @@ async function onMainClick(event) {
       state.profile = await api("/api/task", { ...authBody(), taskId: button.dataset.task });
       render();
       toast("Collected.");
-    } else if (action === "wallet") {
-      await connectWallet();
-    } else if (action === "simulate-wallet") {
-      const address = `EQ${"A".repeat(46)}`;
-      state.profile = await api("/api/task", { ...authBody(), taskId: "wallet", address });
-      render();
-      toast("Preview wallet saved on this computer.");
-    } else if (action === "open-channel") {
-      sessionStorage.setItem("chicken-channel", "1");
-      const url = `https://t.me/${state.config.channel}`;
-      if (state.tg?.openTelegramLink) state.tg.openTelegramLink(url);
-      else window.open(url, "_blank", "noopener");
-      render();
-    } else if (action === "share") {
-      sessionStorage.setItem("chicken-share", "1");
-      const link = state.profile.friends.link || location.origin;
-      const share = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent("I checked my Chicken score from my Telegram account.")}`;
-      if (state.tg?.openTelegramLink) state.tg.openTelegramLink(share);
-      else window.open(share, "_blank", "noopener");
-      render();
     } else if (action === "copy") {
       await navigator.clipboard.writeText(state.profile.friends.link);
       toast("Invite link copied.");
-    } else if (action === "hatch") {
-      await hatchPreviewFriend();
     }
   } catch (error) {
     toast(error.message);
   }
-}
-
-async function connectWallet() {
-  const mod = await import("https://esm.sh/@tonconnect/ui@2.2.0");
-  const UI = mod.TonConnectUI || mod.default;
-  if (!state.ton) {
-    state.ton = new UI({ manifestUrl: `${location.origin}/tonconnect-manifest.json` });
-    state.ton.onStatusChange(async (wallet) => {
-      const address = wallet?.account?.address;
-      if (!address || state.profile?.user.wallet) return;
-      try {
-        state.profile = await api("/api/task", { ...authBody(), taskId: "wallet", address });
-        render();
-        toast("Wallet connected. 1,000 collected.");
-      } catch (error) {
-        toast(error.message);
-      }
-    });
-  }
-  if (state.ton.wallet?.account?.address && !state.profile.user.wallet) {
-    state.profile = await api("/api/task", {
-      ...authBody(),
-      taskId: "wallet",
-      address: state.ton.wallet.account.address,
-    });
-    render();
-    return;
-  }
-  await state.ton.openModal();
-}
-
-async function hatchPreviewFriend() {
-  const used = new Set(state.profile.friends.list.map((friend) => friend.id));
-  used.add(state.profile.user.id);
-  const preset = PRESETS.find((item) => !used.has(item.id));
-  if (!preset) {
-    toast("Every preview account is already in this coop.");
-    return;
-  }
-  state.profile = await api("/api/dev/friend", {
-    userId: state.profile.user.id,
-    friend: {
-      id: preset.id,
-      firstName: preset.label,
-      isPremium: preset.label === "2016",
-    },
-  });
-  render();
-  toast(`${preset.label} joined the coop.`);
-}
-
-async function runShot(shot) {
-  state.account = {
-    id: Number(state.params.get("id") || 2768409),
-    firstName: "Ada",
-    username: "ada",
-    isPremium: state.params.get("premium") !== "0",
-  };
-  state.profile = await api("/api/session", { ...authBody(), create: true });
-  if (state.params.get("friends") === "1") {
-    for (const preset of PRESETS) {
-      if (preset.id === state.account.id) continue;
-      try {
-        await api("/api/dev/friend", {
-          userId: state.account.id,
-          friend: { id: preset.id, firstName: preset.label, isPremium: preset.label === "2016" },
-        });
-      } catch {
-        // This preview account was already hatched.
-      }
-    }
-    state.profile = await api("/api/session", { ...authBody(), create: false });
-  }
-  showMain(shot === "tasks" || shot === "friends" ? shot : "home", false);
 }
 
 async function boot() {
@@ -385,12 +212,6 @@ async function boot() {
     state.tg.disableVerticalSwipes?.();
   }
   state.config = await (await fetch("/api/config")).json();
-  const shot = state.config.dev ? state.params.get("shot") : "";
-  if (state.config.dev && !shot) {
-    const saved = sessionStorage.getItem("chicken-id");
-    if (saved) state.account.id = Number(saved);
-    mountDevBar();
-  }
   $("#go").addEventListener("click", letsGo);
   $(".tabs").addEventListener("click", (event) => {
     const button = event.target.closest(".tab");
@@ -398,10 +219,6 @@ async function boot() {
   });
   $("#screen-main").addEventListener("click", onMainClick);
 
-  if (shot) {
-    await runShot(shot);
-    return;
-  }
   if (state.tg?.initData) {
     const peek = await api("/api/session", { initData: state.tg.initData, create: false });
     if (!peek.fresh) {
@@ -412,20 +229,7 @@ async function boot() {
     show("intro");
     return;
   }
-  if (!state.config.dev) {
-    show("gate");
-    return;
-  }
-  const peek = await api("/api/session", { ...authBody(), create: false });
-  if (!peek.fresh) {
-    state.profile = peek;
-    state.account.isPremium = peek.user.isPremium;
-    const box = $("#premium");
-    if (box) box.checked = state.account.isPremium;
-    showMain("home", false);
-    return;
-  }
-  show("intro");
+  show("gate");
 }
 
 boot().catch((error) => {

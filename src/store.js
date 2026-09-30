@@ -1,39 +1,10 @@
 import { ageLabel, estimateJoined } from "./age.js";
-import {
-  RULES,
-  milestoneBonus,
-  referralShare,
-  scoreParts,
-  validTonAddress,
-} from "./points.js";
+import { RULES, milestoneBonus, referralShare, scoreParts } from "./points.js";
 
-const TASKS = [
-  {
-    id: "wallet",
-    title: "Connect a TON wallet",
-    detail: "Link the wallet a later claim would use.",
-    reward: RULES.tasks.wallet,
-  },
-  {
-    id: "channel",
-    title: "Open the Chicken channel",
-    detail: "Open the news channel, then collect.",
-    reward: RULES.tasks.channel,
-  },
-  {
-    id: "community",
-    title: "Sign the coop book",
-    detail: "A small activity bonus, after the channel.",
-    reward: RULES.tasks.community,
-    requires: "channel",
-  },
-  {
-    id: "share",
-    title: "Share Chicken in a chat",
-    detail: "Send the coop to one chat, then collect.",
-    reward: RULES.tasks.share,
-  },
-];
+// Tasks go here once the bot is live. Each one looks like:
+// { id: "channel", title: "Join the channel", detail: "Open it, then collect.", reward: 500 }
+// Add `requires: "<other id>"` to unlock a task only after another one.
+const TASKS = [];
 
 function rowToUser(row) {
   if (!row) return null;
@@ -65,7 +36,7 @@ function monthLabel(ms) {
   }).format(new Date(ms));
 }
 
-export function present(db, id, { botUsername = "", channel = "", dev = false } = {}) {
+export function present(db, id, { botUsername = "" } = {}) {
   const user = getUser(db, id);
   if (!user) return { fresh: true };
   const friends = db
@@ -91,24 +62,14 @@ export function present(db, id, { botUsername = "", channel = "", dev = false } 
   const referralSum = friends.reduce((sum, friend) => sum + friend.share, 0);
   const milestone = milestoneBonus(friends.length);
   const taskSum = [...done.values()].reduce((sum, reward) => sum + reward, 0);
-  const tasks = TASKS.map((task) => {
-    const locked =
-      (task.requires && !done.has(task.requires)) ||
-      (task.id === "channel" && !channel && !dev);
-    return {
-      id: task.id,
-      title: task.title,
-      detail:
-        task.id === "channel" && channel
-          ? `Open @${channel}, then collect.`
-          : task.id === "channel"
-            ? "Set CHANNEL_USERNAME in .env before this task pays."
-            : task.detail,
-      reward: task.reward,
-      done: done.has(task.id),
-      locked,
-    };
-  });
+  const tasks = TASKS.map((task) => ({
+    id: task.id,
+    title: task.title,
+    detail: task.detail,
+    reward: task.reward,
+    done: done.has(task.id),
+    locked: Boolean(task.requires && !done.has(task.requires)),
+  }));
   return {
     fresh: false,
     user: {
@@ -121,7 +82,6 @@ export function present(db, id, { botUsername = "", channel = "", dev = false } 
       joinedLabel: monthLabel(user.joined_at),
       ageLabel: ageLabel(new Date(user.joined_at), new Date(user.scored_at)),
       scoredOn: day(user.scored_at),
-      wallet: user.wallet || "",
     },
     scores: {
       age: user.age_score,
@@ -179,11 +139,11 @@ function creditReferral(db, friend, referrerId, now) {
   ).run(friend.id, referrerId, share, now);
 }
 
-export function openCoop(db, profile, { now = new Date(), referrerId = null, create = false, botUsername, channel, dev = false } = {}) {
+export function openCoop(db, profile, { now = new Date(), referrerId = null, create = false, botUsername } = {}) {
   const existing = getUser(db, profile.id);
   if (existing) {
     touchProfile(db, existing, profile);
-    return present(db, profile.id, { botUsername, channel, dev });
+    return present(db, profile.id, { botUsername });
   }
   if (!create) return { fresh: true };
 
@@ -221,7 +181,7 @@ export function openCoop(db, profile, { now = new Date(), referrerId = null, cre
       throw error;
     }
   }
-  return present(db, profile.id, { botUsername, channel, dev });
+  return present(db, profile.id, { botUsername });
 }
 
 export function savePendingReferral(db, userId, referrerId) {
@@ -240,27 +200,7 @@ export function takePendingReferral(db, userId) {
   return Number(row.referrer_id);
 }
 
-export function hatchFriend(db, userId, friend, options = {}) {
-  if (!getUser(db, userId)) {
-    const error = new Error("Open the coop first.");
-    error.status = 404;
-    throw error;
-  }
-  if (!friend?.id || friend.id === userId) {
-    const error = new Error("Pick a different friend.");
-    error.status = 400;
-    throw error;
-  }
-  if (getUser(db, friend.id)) {
-    const error = new Error("That friend is already in the coop.");
-    error.status = 400;
-    throw error;
-  }
-  openCoop(db, friend, { ...options, referrerId: userId, create: true });
-  return present(db, userId, options);
-}
-
-export function claimTask(db, userId, taskId, { address = "", channel = "", botUsername = "", dev = false } = {}) {
+export function claimTask(db, userId, taskId, { botUsername = "" } = {}) {
   const user = getUser(db, userId);
   if (!user) {
     const error = new Error("Open the coop first.");
@@ -270,11 +210,6 @@ export function claimTask(db, userId, taskId, { address = "", channel = "", botU
   const task = TASKS.find((item) => item.id === taskId);
   if (!task) {
     const error = new Error("Unknown task.");
-    error.status = 400;
-    throw error;
-  }
-  if (task.id === "channel" && !channel && !dev) {
-    const error = new Error("The Chicken channel is not set yet.");
     error.status = 400;
     throw error;
   }
@@ -292,22 +227,9 @@ export function claimTask(db, userId, taskId, { address = "", channel = "", botU
     .prepare("SELECT 1 FROM tasks WHERE user_id = ? AND task_id = ?")
     .get(userId, taskId);
   if (!already) {
-    let wallet = user.wallet;
-    if (task.id === "wallet") {
-      const trimmed = String(address || "").trim();
-      if (!validTonAddress(trimmed)) {
-        const error = new Error("That is not a TON address.");
-        error.status = 400;
-        throw error;
-      }
-      wallet = trimmed;
-    }
     db.prepare(
       "INSERT INTO tasks (user_id, task_id, reward, created_at) VALUES (?, ?, ?, ?)",
     ).run(userId, taskId, task.reward, Date.now());
-    if (wallet !== user.wallet) {
-      db.prepare("UPDATE users SET wallet = ? WHERE id = ?").run(wallet, userId);
-    }
   }
-  return present(db, userId, { botUsername, channel, dev });
+  return present(db, userId, { botUsername });
 }

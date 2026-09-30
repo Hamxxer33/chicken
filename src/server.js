@@ -9,7 +9,6 @@ import { chickenPng } from "./icon.js";
 import { RULES } from "./points.js";
 import {
   claimTask,
-  hatchFriend,
   openCoop,
   savePendingReferral,
   takePendingReferral,
@@ -45,10 +44,12 @@ function loadEnv(file) {
   }
 }
 
-function devEnabled() {
-  if (process.env.DEV_MODE === "1") return true;
-  if (process.env.DEV_MODE === "0") return false;
-  return !process.env.BOT_TOKEN;
+// Railway sets RAILWAY_PUBLIC_DOMAIN once the service has a domain.
+function publicUrl() {
+  const explicit = process.env.PUBLIC_URL || "";
+  if (explicit) return explicit.replace(/\/$/, "");
+  const railway = process.env.RAILWAY_PUBLIC_DOMAIN || "";
+  return railway ? `https://${railway}` : "";
 }
 
 function readBody(req) {
@@ -101,20 +102,15 @@ function parseReferrer(value, selfId) {
   return numeric;
 }
 
-function channelName() {
-  const value = process.env.CHANNEL_USERNAME || "";
-  return /^[A-Za-z0-9_]{4,32}$/.test(value) ? value : "";
-}
-
 export async function startServer(options = {}) {
   if (!options.skipEnv) loadEnv(path.join(root, ".env"));
-  const dev = options.dev ?? devEnabled();
   const token = options.token ?? process.env.BOT_TOKEN ?? "";
   let botUsername = options.botUsername ?? process.env.BOT_USERNAME ?? "";
-  const db = openDatabase(options.dbPath ?? path.join(root, "data", "chicken.sqlite"));
+  const dataDir = process.env.DATA_DIR || path.join(root, "data");
+  const db = openDatabase(options.dbPath ?? path.join(dataDir, "chicken.sqlite"));
   fs.writeFileSync(path.join(publicDir, "icon.png"), chickenPng());
 
-  const viewOptions = () => ({ botUsername, channel: channelName(), dev });
+  const viewOptions = () => ({ botUsername });
 
   async function identity(body) {
     if (body?.initData) {
@@ -129,20 +125,6 @@ export async function startServer(options = {}) {
           isPremium: Boolean(parsed.user.is_premium),
         },
         startParam: parsed.startParam,
-      };
-    }
-    if (body?.dev) {
-      if (!dev) fail(403, "Local preview is off.");
-      const id = Number(body.id);
-      if (!Number.isSafeInteger(id) || id <= 0) fail(400, "Pick an account.");
-      return {
-        profile: {
-          id,
-          username: String(body.username || ""),
-          firstName: String(body.firstName || "Chicken"),
-          isPremium: Boolean(body.isPremium),
-        },
-        startParam: body.referrerId ? String(body.referrerId) : "",
       };
     }
     fail(401, "Open Chicken from Telegram.");
@@ -168,9 +150,7 @@ export async function startServer(options = {}) {
       }
       if (req.method === "GET" && url.pathname === "/api/config") {
         return send(res, {
-          dev,
           botUsername,
-          channel: channelName(),
           hasBot: Boolean(token),
           rules: {
             premiumRate: RULES.premiumRate,
@@ -181,14 +161,6 @@ export async function startServer(options = {}) {
           },
         });
       }
-      if (req.method === "GET" && url.pathname === "/tonconnect-manifest.json") {
-        const origin = (process.env.PUBLIC_URL || `http://${req.headers.host}`).replace(/\/$/, "");
-        return send(res, {
-          url: origin,
-          name: "Chicken",
-          iconUrl: `${origin}/icon.png`,
-        });
-      }
       if (req.method === "POST" && url.pathname === "/api/session") {
         return send(res, await session(await readBody(req)));
       }
@@ -197,30 +169,7 @@ export async function startServer(options = {}) {
         const { profile } = await identity(body);
         return send(
           res,
-          claimTask(db, profile.id, body.taskId, {
-            address: body.address,
-            ...viewOptions(),
-          }),
-        );
-      }
-      if (req.method === "POST" && url.pathname === "/api/dev/friend") {
-        if (!dev) fail(403, "Local preview is off.");
-        const body = await readBody(req);
-        const userId = Number(body.userId);
-        const friend = body.friend || {};
-        return send(
-          res,
-          hatchFriend(
-            db,
-            userId,
-            {
-              id: Number(friend.id),
-              username: String(friend.username || ""),
-              firstName: String(friend.firstName || "Friend"),
-              isPremium: Boolean(friend.isPremium),
-            },
-            viewOptions(),
-          ),
+          claimTask(db, profile.id, body.taskId, viewOptions()),
         );
       }
       if (req.method === "GET") return sendFile(url.pathname, res);
@@ -235,7 +184,11 @@ export async function startServer(options = {}) {
   });
 
   await new Promise((resolve) => {
-    server.listen(options.port ?? Number(process.env.PORT || 8787), "127.0.0.1", resolve);
+    server.listen(
+      options.port ?? Number(process.env.PORT || 8787),
+      options.host ?? process.env.HOST ?? "127.0.0.1",
+      resolve,
+    );
   });
 
   let stopBot = () => {};
@@ -243,7 +196,7 @@ export async function startServer(options = {}) {
     try {
       const me = await describeBot(token);
       botUsername = botUsername || me.username || "";
-      const webAppUrl = (process.env.PUBLIC_URL || "").replace(/\/$/, "");
+      const webAppUrl = publicUrl();
       await configureBot(token, webAppUrl);
       stopBot = startBot({
         token,
@@ -262,7 +215,6 @@ export async function startServer(options = {}) {
   const url = `http://127.0.0.1:${address.port}`;
   return {
     url,
-    dev,
     close() {
       stopBot();
       db.close();
@@ -291,6 +243,5 @@ const isMain =
 
 if (isMain) {
   const running = await startServer();
-  console.log(`Chicken is open at ${running.url}`);
-  if (running.dev) console.log("Browser preview is on. Open that address to walk through the coop.");
+  console.log(`Chicken is listening on port ${new URL(running.url).port}`);
 }
