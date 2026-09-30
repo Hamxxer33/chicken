@@ -3,12 +3,13 @@ import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { validateInitData } from "./auth.js";
-import { configureBot, describeBot, startBot } from "./bot.js";
+import { configureBot, describeBot, isChatMember, startBot } from "./bot.js";
 import { openDatabase } from "./db.js";
 import { chickenPng } from "./icon.js";
 import { RULES } from "./points.js";
 import {
   claimTask,
+  findTask,
   openCoop,
   savePendingReferral,
   takePendingReferral,
@@ -111,6 +112,19 @@ export async function startServer(options = {}) {
   fs.writeFileSync(path.join(publicDir, "icon.png"), chickenPng());
 
   const viewOptions = () => ({ botUsername });
+  const checkMember = options.checkMember ?? ((chat, userId) => isChatMember(token, chat, userId));
+
+  async function confirmJoined(task, userId) {
+    if (!task?.chat) return;
+    let joined;
+    try {
+      joined = await checkMember(task.chat, userId);
+    } catch (error) {
+      console.error(error.message);
+      fail(503, "Chicken can’t check that chat right now. Try again in a bit.");
+    }
+    if (!joined) fail(400, `Join @${task.chat} first, then collect.`);
+  }
 
   async function identity(body) {
     if (body?.initData) {
@@ -167,6 +181,7 @@ export async function startServer(options = {}) {
       if (req.method === "POST" && url.pathname === "/api/task") {
         const body = await readBody(req);
         const { profile } = await identity(body);
+        await confirmJoined(findTask(body.taskId), profile.id);
         return send(
           res,
           claimTask(db, profile.id, body.taskId, viewOptions()),

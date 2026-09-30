@@ -138,7 +138,8 @@ test("the mini app serves the coop and pays for signed invites", async () => {
     assert.equal(created.user.firstName, "Nia");
     assert.ok(created.user.og);
     assert.equal(created.scores.total, created.scores.age + created.scores.og);
-    assert.deepEqual(created.tasks, []);
+    assert.deepEqual(created.tasks.map((task) => task.id), ["group", "channel"]);
+    assert.equal(created.tasks[0].url, "https://t.me/chickenyxz");
 
     const unknown = await post(running.url, "/api/task", { initData, taskId: "wallet" });
     assert.equal(unknown.status, 400);
@@ -179,6 +180,53 @@ test("requests without a telegram signature are refused", async () => {
     assert.equal(forged.status, 401);
     const devFriend = await fetch(`${running.url}/api/dev/friend`, { method: "POST", body: "{}" });
     assert.equal(devFriend.status, 404);
+  } finally {
+    await running.close();
+  }
+});
+
+test("join tasks pay only after telegram confirms membership", async () => {
+  const token = "999:CHICKEN";
+  const members = new Set();
+  let broken = false;
+  const running = await startServer({
+    port: 0,
+    token,
+    skipEnv: true,
+    bot: false,
+    dbPath: ":memory:",
+    async checkMember(chat, userId) {
+      if (broken) throw new Error("bot is not an admin");
+      return members.has(`${chat}:${userId}`);
+    },
+  });
+  const initData = sign(
+    {
+      auth_date: String(Math.floor(Date.now() / 1000)),
+      user: JSON.stringify({ id: 805158066, first_name: "Bo" }),
+    },
+    token,
+  );
+  try {
+    await post(running.url, "/api/session", { initData, create: true });
+    const early = await post(running.url, "/api/task", { initData, taskId: "group" });
+    assert.equal(early.status, 400);
+    assert.match(early.error, /@chickenyxz/);
+
+    members.add("chickenyxz:805158066");
+    const paid = await post(running.url, "/api/task", { initData, taskId: "group" });
+    assert.equal(paid.scores.tasks, 3000);
+    const again = await post(running.url, "/api/task", { initData, taskId: "group" });
+    assert.equal(again.scores.tasks, 3000);
+
+    broken = true;
+    const down = await post(running.url, "/api/task", { initData, taskId: "channel" });
+    assert.equal(down.status, 503);
+    broken = false;
+    members.add("chickenxzy:805158066");
+    const both = await post(running.url, "/api/task", { initData, taskId: "channel" });
+    assert.equal(both.scores.tasks, 6000);
+    assert.ok(both.tasks.every((task) => task.done));
   } finally {
     await running.close();
   }

@@ -154,11 +154,15 @@ function render() {
           const action = task.done
             ? `<span class="done-flag">Collected</span>`
             : `<button class="yolk" type="button" data-action="claim" data-task="${esc(task.id)}" ${task.locked ? "disabled" : ""}>Collect ${fmt(task.reward)}</button>`;
+          const opener =
+            task.url && !task.done
+              ? `<button class="ghost" type="button" data-action="open" data-url="${esc(task.url)}">Open</button>`
+              : "";
           return `
             <article class="card">
               <h3>${esc(task.title)} <span class="reward">+${fmt(task.reward)}</span></h3>
               <p>${esc(task.detail)}</p>
-              <div class="actions">${action}</div>
+              <div class="actions">${opener}${action}</div>
             </article>`;
         })
         .join("")
@@ -207,6 +211,10 @@ async function onMainClick(event) {
       state.profile = await api("/api/task", { ...authBody(), taskId: button.dataset.task });
       render();
       toast("Collected.");
+    } else if (action === "open") {
+      const url = button.dataset.url;
+      if (state.tg?.openTelegramLink) state.tg.openTelegramLink(url);
+      else window.open(url, "_blank", "noopener");
     } else if (action === "copy") {
       await navigator.clipboard.writeText(state.profile.friends.link);
       toast("Invite link copied.");
