@@ -1,6 +1,6 @@
 // The 2024 dog drop never published its age curve. Chicken keeps the public
 // rules (older account, Premium, OG, 10% of a friend's score, 20,000 every
-// 5 friends, wallet 1,000, small tasks) and uses this age table.
+// 5 friends) and uses this age table. Task rewards live with each task in store.js.
 
 export const RULES = Object.freeze({
   premiumRate: 0.2,
@@ -9,12 +9,6 @@ export const RULES = Object.freeze({
   referralRate: 0.1,
   milestoneEvery: 5,
   milestoneBonus: 20_000,
-  tasks: Object.freeze({
-    wallet: 1_000,
-    channel: 500,
-    community: 50,
-    share: 200,
-  }),
 });
 
 // Score at each whole year on Telegram. Months are prorated. Year 13 is the cap.
@@ -51,9 +45,4 @@ export function referralShare(friendBase) {
 
 export function milestoneBonus(friendCount) {
   return Math.floor(friendCount / RULES.milestoneEvery) * RULES.milestoneBonus;
-}
-
-export function validTonAddress(value) {
-  const s = String(value || "").trim();
-  return /^(EQ|UQ)[A-Za-z0-9_-]{46}$/.test(s) || /^-?\d+:[0-9a-fA-F]{64}$/.test(s);
 }

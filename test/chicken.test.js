@@ -1,6 +1,5 @@
 import crypto from "node:crypto";
 import assert from "node:assert/strict";
-import fs from "node:fs";
 import test from "node:test";
 import { ageLabel, estimateJoined, estimateJoinedMs } from "../src/age.js";
 import { validateInitData } from "../src/auth.js";
@@ -104,106 +103,82 @@ test("opening the coop freezes a score and pays the referrer", () => {
   db.close();
 });
 
-test("the mini app serves the coop and the telegram rules", async () => {
+test("the mini app serves the coop and pays for signed invites", async () => {
   const token = "999:CHICKEN";
   const running = await startServer({
     port: 0,
-    dev: true,
     token,
     skipEnv: true,
     bot: false,
     dbPath: ":memory:",
   });
+  const session = (user, startParam) =>
+    sign(
+      {
+        auth_date: String(Math.floor(Date.now() / 1000)),
+        user: JSON.stringify(user),
+        ...(startParam ? { start_param: startParam } : {}),
+      },
+      token,
+    );
   try {
     const page = await fetch(`${running.url}/`);
     const html = await page.text();
     assert.equal(page.status, 200);
     assert.match(html, /Let’s go/);
-    assert.match(html, /Chicken/);
+    assert.equal(html.includes("devbar"), false);
 
     const png = await fetch(`${running.url}/icon.png`);
     const bytes = Buffer.from(await png.arrayBuffer());
     assert.equal(bytes.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
     assert.equal(chickenPng().subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
 
-    const initData = sign(
-      {
-        auth_date: String(Math.floor(Date.now() / 1000)),
-        user: JSON.stringify({ id: 400169472, first_name: "Nia", is_premium: false }),
-      },
-      token,
-    );
+    const initData = session({ id: 400169472, first_name: "Nia", is_premium: false });
     const created = await post(running.url, "/api/session", { initData, create: true });
     assert.equal(created.user.firstName, "Nia");
     assert.ok(created.user.og);
     assert.equal(created.scores.total, created.scores.age + created.scores.og);
+    assert.deepEqual(created.tasks, []);
 
-    const bad = await post(running.url, "/api/task", { initData, taskId: "wallet", address: "nope" });
-    assert.equal(bad.status, 400);
-
-    const wallet = await post(running.url, "/api/task", {
-      initData,
-      taskId: "wallet",
-      address: `0:${"ab".repeat(32)}`,
-    });
-    assert.equal(wallet.scores.tasks, 1000);
-    const repeat = await post(running.url, "/api/task", {
-      initData,
-      taskId: "wallet",
-      address: `0:${"cd".repeat(32)}`,
-    });
-    assert.equal(repeat.scores.tasks, 1000);
-
-    const early = await post(running.url, "/api/task", { initData, taskId: "community" });
-    assert.equal(early.status, 400);
-    const channel = await post(running.url, "/api/task", { initData, taskId: "channel" });
-    assert.equal(channel.scores.tasks, 1500);
+    const unknown = await post(running.url, "/api/task", { initData, taskId: "wallet" });
+    assert.equal(unknown.status, 400);
 
     const ids = [171295414, 805158066, 1974255900, 5520018289, 8300000000];
-    let latest = created;
     for (const id of ids) {
-      latest = await post(running.url, "/api/dev/friend", {
-        userId: 400169472,
-        friend: { id, firstName: String(id), isPremium: id === 171295414 },
-      });
+      const friend = session({ id, first_name: String(id), is_premium: id === 171295414 }, "400169472");
+      await post(running.url, "/api/session", { initData: friend, create: true });
     }
+    const latest = await post(running.url, "/api/session", { initData });
     assert.equal(latest.friends.count, 5);
     assert.equal(latest.scores.milestone, 20_000);
     assert.ok(latest.scores.referrals > 0);
 
-    const self = await post(running.url, "/api/dev/friend", {
-      userId: 400169472,
-      friend: { id: 400169472, firstName: "Self" },
-    });
-    assert.equal(self.status, 400);
+    const self = session({ id: 805158066, first_name: "Again" }, "805158066");
+    const again = await post(running.url, "/api/session", { initData: self, create: true });
+    assert.equal(again.friends.count, 0);
   } finally {
     await running.close();
   }
 });
 
-test("preview accounts are refused when dev mode is off", async () => {
+test("requests without a telegram signature are refused", async () => {
   const running = await startServer({
     port: 0,
-    dev: false,
     token: "999:CHICKEN",
     skipEnv: true,
     bot: false,
     dbPath: ":memory:",
   });
   try {
-    const refused = await post(running.url, "/api/session", { dev: true, id: 2768409, create: true });
-    assert.equal(refused.status, 403);
-    const initData = sign(
-      {
-        auth_date: String(Math.floor(Date.now() / 1000)),
-        user: JSON.stringify({ id: 805158066, first_name: "Bo" }),
-      },
-      "999:CHICKEN",
-    );
-    await post(running.url, "/api/session", { initData, create: true });
-    const channel = await post(running.url, "/api/task", { initData, taskId: "channel" });
-    assert.equal(channel.status, 400);
-    assert.equal(fs.existsSync(new URL("../public/index.html", import.meta.url)), true);
+    const fake = await post(running.url, "/api/session", { dev: true, id: 2768409, create: true });
+    assert.equal(fake.status, 401);
+    const forged = await post(running.url, "/api/session", {
+      initData: sign({ auth_date: String(Math.floor(Date.now() / 1000)), user: JSON.stringify({ id: 7 }) }, "1:OTHER"),
+      create: true,
+    });
+    assert.equal(forged.status, 401);
+    const devFriend = await fetch(`${running.url}/api/dev/friend`, { method: "POST", body: "{}" });
+    assert.equal(devFriend.status, 404);
   } finally {
     await running.close();
   }
