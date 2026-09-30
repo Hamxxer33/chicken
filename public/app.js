@@ -32,6 +32,19 @@ function toast(message) {
   toast.timer = setTimeout(() => node.classList.remove("show"), 2800);
 }
 
+// Mirrors Telegram's safe areas into CSS, for clients whose script does not.
+function syncInsets() {
+  const tg = state.tg;
+  if (!tg) return;
+  const root = document.documentElement.style;
+  const set = (name, value) => {
+    if (Number.isFinite(value)) root.setProperty(name, `${value}px`);
+  };
+  set("--tg-safe-area-inset-top", tg.safeAreaInset?.top);
+  set("--tg-safe-area-inset-bottom", tg.safeAreaInset?.bottom);
+  set("--tg-content-safe-area-inset-top", tg.contentSafeAreaInset?.top);
+}
+
 function show(name) {
   for (const id of ["intro", "scan", "gate", "main"]) {
     $(`#screen-${id}`).hidden = id !== name;
@@ -210,6 +223,10 @@ async function boot() {
     state.tg.setHeaderColor?.("#E7D3A1");
     state.tg.setBackgroundColor?.("#E7D3A1");
     state.tg.disableVerticalSwipes?.();
+    syncInsets();
+    for (const event of ["safeAreaChanged", "contentSafeAreaChanged", "fullscreenChanged"]) {
+      state.tg.onEvent?.(event, syncInsets);
+    }
   }
   state.config = await (await fetch("/api/config")).json();
   $("#go").addEventListener("click", letsGo);

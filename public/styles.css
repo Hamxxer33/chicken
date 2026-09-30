@@ -13,6 +13,9 @@
   color: var(--ink);
   font-family: Outfit, "Segoe UI", sans-serif;
   background: var(--straw);
+  /* Telegram full screen draws its Close and menu buttons over the page. */
+  --top-gap: calc(var(--tg-safe-area-inset-top, 0px) + var(--tg-content-safe-area-inset-top, 0px));
+  --bottom-gap: max(var(--tg-safe-area-inset-bottom, 0px), env(safe-area-inset-bottom));
 }
 
 * { box-sizing: border-box; }
@@ -199,7 +202,7 @@ h2 { font-size: 32px; }
   grid-template-columns: repeat(3, 1fr);
   border-top: 1px solid var(--line);
   background: #fffaf0;
-  padding-bottom: env(safe-area-inset-bottom);
+  padding-bottom: var(--bottom-gap);
 }
 .tab {
   border: 0;
@@ -241,5 +244,11 @@ h2 { font-size: 32px; }
 }
 @media (max-width: 520px) {
   .stage { padding: 0; }
-  .phone { max-width: 100%; min-height: 100dvh; border-radius: 0; box-shadow: none; }
+  .phone {
+    max-width: 100%;
+    min-height: 100dvh;
+    border-radius: 0;
+    box-shadow: none;
+    padding-top: var(--top-gap);
+  }
 }
