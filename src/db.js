@@ -48,3 +48,10 @@ export function openDatabase(file) {
   db.exec(SCHEMA);
   return db;
 }
+
+export function removeTasks(db, taskIds) {
+  if (!taskIds.length) return 0;
+  const marks = taskIds.map(() => "?").join(", ");
+  db.prepare(`DELETE FROM task_opens WHERE task_id IN (${marks})`).run(...taskIds);
+  return Number(db.prepare(`DELETE FROM tasks WHERE task_id IN (${marks})`).run(...taskIds).changes);
+}

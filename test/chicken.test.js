@@ -1,4 +1,7 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ageLabel, estimateJoined, estimateJoinedMs } from "../src/age.js";
@@ -138,7 +141,7 @@ test("the mini app serves the coop and pays for signed invites", async () => {
     assert.equal(created.user.firstName, "Nia");
     assert.ok(created.user.og);
     assert.equal(created.scores.total, created.scores.age + created.scores.og);
-    assert.deepEqual(created.tasks.map((task) => task.id), ["group", "channel", "x", "x-repost", "x-like", "x-comment", "daily"]);
+    assert.deepEqual(created.tasks.map((task) => task.id), ["group", "channel", "x", "post2-repost", "post2-like", "post2-comment", "daily"]);
     assert.equal(created.tasks[0].url, "https://t.me/chickenyxz");
 
     const unknown = await post(running.url, "/api/task", { initData, taskId: "wallet" });
@@ -302,7 +305,7 @@ test("the daily check-in pays 500 once per day", async () => {
     assert.equal(next.scores.tasks, 1000);
     assert.match(next.tasks.find((task) => task.id === "daily").detail, /2 days so far/);
 
-    const post3 = ["x-repost", "x-like", "x-comment"];
+    const post3 = ["post2-repost", "post2-like", "post2-comment"];
     for (const taskId of post3) await post(running.url, "/api/task/open", { initData, taskId });
     clock += 11_000;
     let latest;
@@ -311,6 +314,24 @@ test("the daily check-in pays 500 once per day", async () => {
   } finally {
     await running.close();
   }
+});
+
+test("old X post tasks are removed on start and other tasks stay", async () => {
+  const file = path.join(os.tmpdir(), `chicken-${process.pid}-${Date.now()}.sqlite`);
+  const db = openDatabase(file);
+  openCoop(db, { id: 2768409, firstName: "Ada" }, { now: NOW, create: true });
+  const insert = db.prepare("INSERT INTO tasks (user_id, task_id, reward, created_at) VALUES (?, ?, ?, ?)");
+  for (const [taskId, reward] of [["x-repost", 3000], ["x-like", 3000], ["x-comment", 3000], ["x", 6000], ["group", 3000]]) {
+    insert.run(2768409, taskId, reward, 0);
+  }
+  db.close();
+  const running = await startServer({ port: 0, token: "999:CHICKEN", skipEnv: true, bot: false, dbPath: file });
+  await running.close();
+  const after = openDatabase(file);
+  const left = after.prepare("SELECT task_id, reward FROM tasks ORDER BY task_id").all();
+  after.close();
+  for (const suffix of ["", "-shm", "-wal"]) fs.rmSync(file + suffix, { force: true });
+  assert.deepEqual(left.map((row) => [row.task_id, Number(row.reward)]), [["group", 3000], ["x", 6000]]);
 });
 
 async function post(base, pathname, body) {
