@@ -152,7 +152,7 @@ function render() {
     ? tasks
         .map((task) => {
           const action = task.done
-            ? `<span class="done-flag">Collected</span>`
+            ? `<span class="done-flag">${task.daily ? "Back tomorrow" : "Collected"}</span>`
             : `<button class="yolk" type="button" data-action="claim" data-task="${esc(task.id)}" ${task.locked ? "disabled" : ""}>Collect ${fmt(task.reward)}</button>`;
           const opener =
             task.url && !task.done
