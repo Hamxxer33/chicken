@@ -5,6 +5,7 @@ import { RULES, milestoneBonus, referralShare, scoreParts } from "./points.js";
 // player is a member, so the bot has to be an admin of that group or channel.
 // A task with `link` can't be checked (X has no free follower lookup), so it
 // pays once the player has had the link open for OPEN_SECONDS.
+// A `daily` task pays again every UTC day; each day is its own row.
 // Add `requires: "<other id>"` to unlock a task only after another one.
 const TASKS = [
   {
@@ -28,7 +29,40 @@ const TASKS = [
     reward: 6_000,
     link: "https://x.com/chickenxyz_",
   },
+  {
+    id: "x-repost",
+    title: "Repost our post on X",
+    detail: "Repost the Chicken post, then come back and collect.",
+    reward: 3_000,
+    link: "https://x.com/chickenxyz_/status/2106054379652477294",
+  },
+  {
+    id: "x-like",
+    title: "Like our post on X",
+    detail: "Like the Chicken post, then come back and collect.",
+    reward: 3_000,
+    link: "https://x.com/chickenxyz_/status/2106054379652477294",
+  },
+  {
+    id: "x-comment",
+    title: "Comment on our post on X",
+    detail: "Leave a comment on the Chicken post, then come back and collect.",
+    reward: 3_000,
+    link: "https://x.com/chickenxyz_/status/2106054379652477294",
+  },
+  {
+    id: "daily",
+    title: "Daily check-in",
+    detail: "Come back every day for another 500.",
+    reward: 500,
+    daily: true,
+  },
 ];
+
+// The row a task is stored under: daily tasks get one per UTC day.
+function taskKey(task, now) {
+  return task.daily ? `${task.id}:${day(now)}` : task.id;
+}
 
 export const OPEN_SECONDS = 10;
 
@@ -66,7 +100,7 @@ function monthLabel(ms) {
   }).format(new Date(ms));
 }
 
-export function present(db, id, { botUsername = "" } = {}) {
+export function present(db, id, { botUsername = "", now = Date.now() } = {}) {
   const user = getUser(db, id);
   if (!user) return { fresh: true };
   const friends = db
@@ -92,16 +126,22 @@ export function present(db, id, { botUsername = "" } = {}) {
   const referralSum = friends.reduce((sum, friend) => sum + friend.share, 0);
   const milestone = milestoneBonus(friends.length);
   const taskSum = [...done.values()].reduce((sum, reward) => sum + reward, 0);
-  const tasks = TASKS.map((task) => ({
-    id: task.id,
-    title: task.title,
-    detail: task.detail,
-    reward: task.reward,
-    url: task.chat ? `https://t.me/${task.chat}` : task.link || "",
-    external: Boolean(task.link),
-    done: done.has(task.id),
-    locked: Boolean(task.requires && !done.has(task.requires)),
-  }));
+  const tasks = TASKS.map((task) => {
+    const days = task.daily
+      ? [...done.keys()].filter((key) => key.startsWith(`${task.id}:`)).length
+      : 0;
+    return {
+      id: task.id,
+      title: task.title,
+      detail: days ? `${task.detail} ${days === 1 ? "1 day" : `${days} days`} so far.` : task.detail,
+      reward: task.reward,
+      url: task.chat ? `https://t.me/${task.chat}` : task.link || "",
+      external: Boolean(task.link),
+      daily: Boolean(task.daily),
+      done: done.has(taskKey(task, now)),
+      locked: Boolean(task.requires && !done.has(task.requires)),
+    };
+  });
   return {
     fresh: false,
     user: {
@@ -263,9 +303,10 @@ export function claimTask(db, userId, taskId, { botUsername = "", now = Date.now
       throw error;
     }
   }
+  const key = taskKey(task, now);
   const already = db
     .prepare("SELECT 1 FROM tasks WHERE user_id = ? AND task_id = ?")
-    .get(userId, taskId);
+    .get(userId, key);
   if (!already && task.link) {
     const opened = db
       .prepare("SELECT opened_at FROM task_opens WHERE user_id = ? AND task_id = ?")
@@ -284,7 +325,7 @@ export function claimTask(db, userId, taskId, { botUsername = "", now = Date.now
   if (!already) {
     db.prepare(
       "INSERT INTO tasks (user_id, task_id, reward, created_at) VALUES (?, ?, ?, ?)",
-    ).run(userId, taskId, task.reward, now);
+    ).run(userId, key, task.reward, now);
   }
-  return present(db, userId, { botUsername });
+  return present(db, userId, { botUsername, now });
 }

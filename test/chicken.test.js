@@ -138,7 +138,7 @@ test("the mini app serves the coop and pays for signed invites", async () => {
     assert.equal(created.user.firstName, "Nia");
     assert.ok(created.user.og);
     assert.equal(created.scores.total, created.scores.age + created.scores.og);
-    assert.deepEqual(created.tasks.map((task) => task.id), ["group", "channel", "x"]);
+    assert.deepEqual(created.tasks.map((task) => task.id), ["group", "channel", "x", "x-repost", "x-like", "x-comment", "daily"]);
     assert.equal(created.tasks[0].url, "https://t.me/chickenyxz");
 
     const unknown = await post(running.url, "/api/task", { initData, taskId: "wallet" });
@@ -226,7 +226,7 @@ test("join tasks pay only after telegram confirms membership", async () => {
     members.add("chickenxzy:805158066");
     const both = await post(running.url, "/api/task", { initData, taskId: "channel" });
     assert.equal(both.scores.tasks, 6000);
-    assert.ok(both.tasks.filter((task) => task.id !== "x").every((task) => task.done));
+    assert.ok(both.tasks.filter((task) => task.url.startsWith("https://t.me/")).every((task) => task.done));
   } finally {
     await running.close();
   }
@@ -266,6 +266,48 @@ test("the X task pays after the link has been open for a while", async () => {
     await post(running.url, "/api/task/open", { initData, taskId: "x" });
     const again = await post(running.url, "/api/task", { initData, taskId: "x" });
     assert.equal(again.scores.tasks, 6000);
+  } finally {
+    await running.close();
+  }
+});
+
+test("the daily check-in pays 500 once per day", async () => {
+  const token = "999:CHICKEN";
+  let clock = Date.parse("2026-10-02T09:00:00Z");
+  const running = await startServer({
+    port: 0,
+    token,
+    skipEnv: true,
+    bot: false,
+    dbPath: ":memory:",
+    now: () => clock,
+  });
+  const initData = sign(
+    {
+      auth_date: String(Math.floor(Date.now() / 1000)),
+      user: JSON.stringify({ id: 5520018289, first_name: "Day" }),
+    },
+    token,
+  );
+  try {
+    await post(running.url, "/api/session", { initData, create: true });
+    const first = await post(running.url, "/api/task", { initData, taskId: "daily" });
+    assert.equal(first.scores.tasks, 500);
+    assert.equal(first.tasks.find((task) => task.id === "daily").done, true);
+    const twice = await post(running.url, "/api/task", { initData, taskId: "daily" });
+    assert.equal(twice.scores.tasks, 500);
+
+    clock += 24 * 60 * 60 * 1000;
+    const next = await post(running.url, "/api/task", { initData, taskId: "daily" });
+    assert.equal(next.scores.tasks, 1000);
+    assert.match(next.tasks.find((task) => task.id === "daily").detail, /2 days so far/);
+
+    const post3 = ["x-repost", "x-like", "x-comment"];
+    for (const taskId of post3) await post(running.url, "/api/task/open", { initData, taskId });
+    clock += 11_000;
+    let latest;
+    for (const taskId of post3) latest = await post(running.url, "/api/task", { initData, taskId });
+    assert.equal(latest.scores.tasks, 1000 + 9000);
   } finally {
     await running.close();
   }
