@@ -4,10 +4,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { validateInitData } from "./auth.js";
 import { configureBot, describeBot, isChatMember, startBot } from "./bot.js";
-import { openDatabase } from "./db.js";
+import { openDatabase, removeTasks } from "./db.js";
 import { chickenPng } from "./icon.js";
 import { RULES } from "./points.js";
 import {
+  RETIRED_TASKS,
   claimTask,
   findTask,
   openCoop,
@@ -110,6 +111,8 @@ export async function startServer(options = {}) {
   let botUsername = options.botUsername ?? process.env.BOT_USERNAME ?? "";
   const dataDir = process.env.DATA_DIR || path.join(root, "data");
   const db = openDatabase(options.dbPath ?? path.join(dataDir, "chicken.sqlite"));
+  const removed = removeTasks(db, RETIRED_TASKS);
+  if (removed) console.log(`Removed ${removed} completed tasks for the old X post.`);
   fs.writeFileSync(path.join(publicDir, "icon.png"), chickenPng());
 
   const viewOptions = () => ({ botUsername });

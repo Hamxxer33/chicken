@@ -30,25 +30,25 @@ const TASKS = [
     link: "https://x.com/chickenxyz_",
   },
   {
-    id: "x-repost",
+    id: "post2-repost",
     title: "Repost our post on X",
     detail: "Repost the Chicken post, then come back and collect.",
     reward: 3_000,
-    link: "https://x.com/chickenxyz_/status/2106054379652477294",
+    link: "https://x.com/chickenxyz_/status/2106056361989800167",
   },
   {
-    id: "x-like",
+    id: "post2-like",
     title: "Like our post on X",
     detail: "Like the Chicken post, then come back and collect.",
     reward: 3_000,
-    link: "https://x.com/chickenxyz_/status/2106054379652477294",
+    link: "https://x.com/chickenxyz_/status/2106056361989800167",
   },
   {
-    id: "x-comment",
+    id: "post2-comment",
     title: "Comment on our post on X",
     detail: "Leave a comment on the Chicken post, then come back and collect.",
     reward: 3_000,
-    link: "https://x.com/chickenxyz_/status/2106054379652477294",
+    link: "https://x.com/chickenxyz_/status/2106056361989800167",
   },
   {
     id: "daily",
@@ -58,6 +58,10 @@ const TASKS = [
     daily: true,
   },
 ];
+
+// Tasks for an X post that has been replaced. Their points are removed on
+// start-up so everyone can do the new post's tasks. Give a new post new ids.
+export const RETIRED_TASKS = ["x-repost", "x-like", "x-comment"];
 
 // The row a task is stored under: daily tasks get one per UTC day.
 function taskKey(task, now) {
