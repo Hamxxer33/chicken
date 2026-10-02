@@ -156,7 +156,7 @@ function render() {
             : `<button class="yolk" type="button" data-action="claim" data-task="${esc(task.id)}" ${task.locked ? "disabled" : ""}>Collect ${fmt(task.reward)}</button>`;
           const opener =
             task.url && !task.done
-              ? `<button class="ghost" type="button" data-action="open" data-url="${esc(task.url)}">Open</button>`
+              ? `<button class="ghost" type="button" data-action="open" data-task="${esc(task.id)}" data-external="${task.external ? "1" : ""}" data-url="${esc(task.url)}">Open</button>`
               : "";
           return `
             <article class="card">
@@ -213,7 +213,11 @@ async function onMainClick(event) {
       toast("Collected.");
     } else if (action === "open") {
       const url = button.dataset.url;
-      if (state.tg?.openTelegramLink) state.tg.openTelegramLink(url);
+      if (button.dataset.external) {
+        api("/api/task/open", { ...authBody(), taskId: button.dataset.task }).catch(() => {});
+        if (state.tg?.openLink) state.tg.openLink(url);
+        else window.open(url, "_blank", "noopener");
+      } else if (state.tg?.openTelegramLink) state.tg.openTelegramLink(url);
       else window.open(url, "_blank", "noopener");
     } else if (action === "copy") {
       await navigator.clipboard.writeText(state.profile.friends.link);

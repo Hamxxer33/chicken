@@ -138,7 +138,7 @@ test("the mini app serves the coop and pays for signed invites", async () => {
     assert.equal(created.user.firstName, "Nia");
     assert.ok(created.user.og);
     assert.equal(created.scores.total, created.scores.age + created.scores.og);
-    assert.deepEqual(created.tasks.map((task) => task.id), ["group", "channel"]);
+    assert.deepEqual(created.tasks.map((task) => task.id), ["group", "channel", "x"]);
     assert.equal(created.tasks[0].url, "https://t.me/chickenyxz");
 
     const unknown = await post(running.url, "/api/task", { initData, taskId: "wallet" });
@@ -226,7 +226,46 @@ test("join tasks pay only after telegram confirms membership", async () => {
     members.add("chickenxzy:805158066");
     const both = await post(running.url, "/api/task", { initData, taskId: "channel" });
     assert.equal(both.scores.tasks, 6000);
-    assert.ok(both.tasks.every((task) => task.done));
+    assert.ok(both.tasks.filter((task) => task.id !== "x").every((task) => task.done));
+  } finally {
+    await running.close();
+  }
+});
+
+test("the X task pays after the link has been open for a while", async () => {
+  const token = "999:CHICKEN";
+  let clock = Date.parse("2026-10-02T12:00:00Z");
+  const running = await startServer({
+    port: 0,
+    token,
+    skipEnv: true,
+    bot: false,
+    dbPath: ":memory:",
+    now: () => clock,
+  });
+  const initData = sign(
+    {
+      auth_date: String(Math.floor(Date.now() / 1000)),
+      user: JSON.stringify({ id: 1974255900, first_name: "Xi" }),
+    },
+    token,
+  );
+  try {
+    const created = await post(running.url, "/api/session", { initData, create: true });
+    assert.equal(created.tasks.find((task) => task.id === "x").url, "https://x.com/chickenxyz_");
+    const skipped = await post(running.url, "/api/task", { initData, taskId: "x" });
+    assert.equal(skipped.status, 400);
+
+    await post(running.url, "/api/task/open", { initData, taskId: "x" });
+    const rushed = await post(running.url, "/api/task", { initData, taskId: "x" });
+    assert.equal(rushed.status, 400);
+
+    clock += 11_000;
+    const paid = await post(running.url, "/api/task", { initData, taskId: "x" });
+    assert.equal(paid.scores.tasks, 6000);
+    await post(running.url, "/api/task/open", { initData, taskId: "x" });
+    const again = await post(running.url, "/api/task", { initData, taskId: "x" });
+    assert.equal(again.scores.tasks, 6000);
   } finally {
     await running.close();
   }

@@ -3,6 +3,8 @@ import { RULES, milestoneBonus, referralShare, scoreParts } from "./points.js";
 
 // Each task pays once. A task with `chat` pays only after Telegram confirms the
 // player is a member, so the bot has to be an admin of that group or channel.
+// A task with `link` can't be checked (X has no free follower lookup), so it
+// pays once the player has had the link open for OPEN_SECONDS.
 // Add `requires: "<other id>"` to unlock a task only after another one.
 const TASKS = [
   {
@@ -19,7 +21,16 @@ const TASKS = [
     reward: 3_000,
     chat: "chickenxzy",
   },
+  {
+    id: "x",
+    title: "Follow Chicken on X",
+    detail: "Follow @chickenxyz_ on X, then come back and collect.",
+    reward: 6_000,
+    link: "https://x.com/chickenxyz_",
+  },
 ];
+
+export const OPEN_SECONDS = 10;
 
 export function findTask(taskId) {
   return TASKS.find((item) => item.id === taskId) || null;
@@ -86,7 +97,8 @@ export function present(db, id, { botUsername = "" } = {}) {
     title: task.title,
     detail: task.detail,
     reward: task.reward,
-    url: task.chat ? `https://t.me/${task.chat}` : "",
+    url: task.chat ? `https://t.me/${task.chat}` : task.link || "",
+    external: Boolean(task.link),
     done: done.has(task.id),
     locked: Boolean(task.requires && !done.has(task.requires)),
   }));
@@ -220,7 +232,15 @@ export function takePendingReferral(db, userId) {
   return Number(row.referrer_id);
 }
 
-export function claimTask(db, userId, taskId, { botUsername = "" } = {}) {
+export function openTask(db, userId, taskId, now = Date.now()) {
+  const task = findTask(taskId);
+  if (!task?.link || !getUser(db, userId)) return;
+  db.prepare(
+    "INSERT OR IGNORE INTO task_opens (user_id, task_id, opened_at) VALUES (?, ?, ?)",
+  ).run(userId, taskId, now);
+}
+
+export function claimTask(db, userId, taskId, { botUsername = "", now = Date.now() } = {}) {
   const user = getUser(db, userId);
   if (!user) {
     const error = new Error("Open the coop first.");
@@ -246,10 +266,25 @@ export function claimTask(db, userId, taskId, { botUsername = "" } = {}) {
   const already = db
     .prepare("SELECT 1 FROM tasks WHERE user_id = ? AND task_id = ?")
     .get(userId, taskId);
+  if (!already && task.link) {
+    const opened = db
+      .prepare("SELECT opened_at FROM task_opens WHERE user_id = ? AND task_id = ?")
+      .get(userId, taskId);
+    if (!opened) {
+      const error = new Error("Tap Open first.");
+      error.status = 400;
+      throw error;
+    }
+    if (now - Number(opened.opened_at) < OPEN_SECONDS * 1000) {
+      const error = new Error("Give it a few seconds on X, then collect.");
+      error.status = 400;
+      throw error;
+    }
+  }
   if (!already) {
     db.prepare(
       "INSERT INTO tasks (user_id, task_id, reward, created_at) VALUES (?, ?, ?, ?)",
-    ).run(userId, taskId, task.reward, Date.now());
+    ).run(userId, taskId, task.reward, now);
   }
   return present(db, userId, { botUsername });
 }
