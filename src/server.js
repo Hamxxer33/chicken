@@ -11,6 +11,7 @@ import {
   claimTask,
   findTask,
   openCoop,
+  openTask,
   savePendingReferral,
   takePendingReferral,
 } from "./store.js";
@@ -178,13 +179,22 @@ export async function startServer(options = {}) {
       if (req.method === "POST" && url.pathname === "/api/session") {
         return send(res, await session(await readBody(req)));
       }
+      if (req.method === "POST" && url.pathname === "/api/task/open") {
+        const body = await readBody(req);
+        const { profile } = await identity(body);
+        openTask(db, profile.id, body.taskId, options.now?.() ?? Date.now());
+        return send(res, { ok: true });
+      }
       if (req.method === "POST" && url.pathname === "/api/task") {
         const body = await readBody(req);
         const { profile } = await identity(body);
         await confirmJoined(findTask(body.taskId), profile.id);
         return send(
           res,
-          claimTask(db, profile.id, body.taskId, viewOptions()),
+          claimTask(db, profile.id, body.taskId, {
+            ...viewOptions(),
+            now: options.now?.() ?? Date.now(),
+          }),
         );
       }
       if (req.method === "GET") return sendFile(url.pathname, res);
