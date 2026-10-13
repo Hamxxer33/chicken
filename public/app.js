@@ -147,6 +147,7 @@ function render() {
       ${row("Every 5 friends", scores.milestone)}
       ${row("Tasks", scores.tasks)}
       ${row("Spins", scores.spins)}
+      ${state.profile.spin.gram.won ? `<div class="row"><span>GRAM won</span><b>${fmt(state.profile.spin.gram.won)}</b></div>` : ""}
     </div>
     <p class="note">Chicken points live in this coop. They are not a listed coin.</p>
   `;
@@ -206,19 +207,26 @@ function render() {
 const WHEEL_COLORS = ["#f0b429", "#fff6e4", "#f6d68a", "#e23d32", "#fff6e4", "#2f6b45"];
 const WHEEL_TEXT = ["#2a1b10", "#2a1b10", "#2a1b10", "#fff6e4", "#2a1b10", "#fff6e4"];
 
+function wheelSlices(spin) {
+  const labels = spin.slices.map((reward) => fmt(reward));
+  if (spin.gram.left >= spin.gram.amount) labels.push(`${spin.gram.amount} GRAM`);
+  return labels;
+}
+
 function wheelSvg(slices) {
   const size = slices.length;
   const step = (Math.PI * 2) / size;
   const point = (angle, radius) => [100 + radius * Math.sin(angle), 100 - radius * Math.cos(angle)];
-  const parts = slices.map((reward, index) => {
+  const parts = slices.map((label, index) => {
+    const gram = label.endsWith("GRAM");
     const [x1, y1] = point(index * step, 98);
     const [x2, y2] = point((index + 1) * step, 98);
     const mid = (index + 0.5) * step;
     const [tx, ty] = point(mid, 66);
     const degrees = (mid * 180) / Math.PI;
     return `
-      <path d="M100 100 L${x1} ${y1} A98 98 0 0 1 ${x2} ${y2} Z" fill="${WHEEL_COLORS[index % WHEEL_COLORS.length]}" stroke="#2a1b10" stroke-width="2" />
-      <text x="${tx}" y="${ty}" text-anchor="middle" dominant-baseline="middle" transform="rotate(${degrees} ${tx} ${ty})" style="fill:${WHEEL_TEXT[index % WHEEL_TEXT.length]}">${fmt(reward)}</text>`;
+      <path d="M100 100 L${x1} ${y1} A98 98 0 0 1 ${x2} ${y2} Z" fill="${gram ? "#2a1b10" : WHEEL_COLORS[index % WHEEL_COLORS.length]}" stroke="#2a1b10" stroke-width="2" />
+      <text x="${tx}" y="${ty}" text-anchor="middle" dominant-baseline="middle" transform="rotate(${degrees} ${tx} ${ty})" style="fill:${gram ? "#f0b429" : WHEEL_TEXT[index % WHEEL_TEXT.length]}${gram ? ";font-size:13px" : ""}">${esc(label)}</text>`;
   });
   return `<svg class="wheel" id="wheel" viewBox="0 0 200 200" style="transform: rotate(${state.wheelTurn}deg)">
     <circle cx="100" cy="100" r="99" fill="#2a1b10" />${parts.join("")}</svg>`;
@@ -226,21 +234,62 @@ function wheelSvg(slices) {
 
 function renderSpin() {
   const { spin } = state.profile;
+  const { gram } = spin;
   const left = spin.left;
+  const gramOn = gram.left >= gram.amount;
+  const prize = gram.won
+    ? `<article class="card gram-card">
+        <h3>You won ${fmt(gram.won)} GRAM</h3>
+        ${
+          gram.unpaid
+            ? gram.wallet
+              ? `<p>${fmt(gram.unpaid)} GRAM will be sent to <b>${esc(gram.wallet.slice(0, 6))}…${esc(gram.wallet.slice(-4))}</b>.</p>`
+              : `<p>Add your GRAM (TON) wallet address so we can send it.</p>`
+            : `<p>Paid. Check your wallet.</p>`
+        }
+        ${
+          gram.unpaid
+            ? `<form class="wallet-form" data-form="wallet">
+                <input name="address" autocomplete="off" spellcheck="false" placeholder="UQ… or EQ… wallet address" value="${esc(gram.wallet)}" aria-label="GRAM wallet address" />
+                <button class="yolk" type="submit">${gram.wallet ? "Update wallet" : "Save wallet"}</button>
+              </form>`
+            : ""
+        }
+      </article>`
+    : "";
   $("#panel-spin").innerHTML = `
     <div class="spin">
       <h2>Spin and win</h2>
-      <p class="note">${spin.perDay} free spins a day. Every spin pays Chicken points.</p>
+      <p class="note">${spin.perDay} free spins a day. Every spin pays Chicken points${
+        gramOn
+          ? `, or ${gram.amount} GRAM with a 1 in ${fmt(gram.odds)} chance. ${fmt(gram.left)} GRAM left in the prize pool.`
+          : ". The GRAM prize pool has been won."
+      }</p>
       <div class="wheel-wrap">
         <span class="pointer" aria-hidden="true"></span>
-        ${wheelSvg(spin.slices)}
+        ${wheelSvg(wheelSlices(spin))}
         <span class="hub" aria-hidden="true"><svg><use href="#chicken" /></svg></span>
       </div>
       <button class="yolk" type="button" data-action="spin" ${left && !state.spinning ? "" : "disabled"}>
         ${left ? "Spin" : "Come back tomorrow"}
       </button>
       <p class="spin-left">${left === 1 ? "1 spin left today" : `${left} spins left today`}</p>
+      ${prize}
     </div>`;
+}
+
+async function onWalletSubmit(event) {
+  const form = event.target.closest("[data-form=wallet]");
+  if (!form) return;
+  event.preventDefault();
+  try {
+    state.profile = await api("/api/wallet", { ...authBody(), address: form.address.value });
+    render();
+    setTab("spin");
+    toast("Wallet saved.");
+  } catch (error) {
+    toast(error.message);
+  }
 }
 
 async function doSpin() {
@@ -249,7 +298,7 @@ async function doSpin() {
   renderSpin();
   try {
     const result = await api("/api/spin", authBody());
-    const size = state.profile.spin.slices.length;
+    const size = wheelSlices(state.profile.spin).length;
     const center = (result.slice + 0.5) * (360 / size);
     const current = ((state.wheelTurn % 360) + 360) % 360;
     const target = (360 - center + 360) % 360;
@@ -261,7 +310,8 @@ async function doSpin() {
     state.spinning = false;
     render();
     state.tg?.HapticFeedback?.notificationOccurred("success");
-    toast(`+${fmt(result.reward)} Chicken`);
+    if (result.gram) toast(`You won ${fmt(result.gram)} GRAM!`);
+    else toast(`+${fmt(result.reward)} Chicken`);
   } catch (error) {
     state.spinning = false;
     renderSpin();
@@ -320,6 +370,7 @@ async function boot() {
     if (button) setTab(button.dataset.tab);
   });
   $("#screen-main").addEventListener("click", onMainClick);
+  $("#screen-main").addEventListener("submit", onWalletSubmit);
 
   if (state.tg?.initData) {
     const peek = await api("/api/session", { initData: state.tg.initData, create: false });

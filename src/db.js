@@ -43,6 +43,15 @@ CREATE TABLE IF NOT EXISTS spins (
   created_at INTEGER NOT NULL,
   PRIMARY KEY (user_id, day, n)
 );
+CREATE TABLE IF NOT EXISTS gram_wins (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  amount REAL NOT NULL,
+  won_at INTEGER NOT NULL,
+  paid_at INTEGER,
+  tx TEXT
+);
+CREATE INDEX IF NOT EXISTS gram_wins_user ON gram_wins (user_id);
 CREATE TABLE IF NOT EXISTS pending_referrals (
   user_id INTEGER PRIMARY KEY,
   referrer_id INTEGER NOT NULL

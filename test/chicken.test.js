@@ -346,6 +346,7 @@ test("spin pays points three times a day and the server picks the slice", async 
     dbPath: ":memory:",
     now: () => clock,
     random: () => rolls.shift() ?? 0,
+    gram: () => 1,
   });
   const initData = sign(
     {
@@ -378,6 +379,79 @@ test("spin pays points three times a day and the server picks the slice", async 
     assert.equal(tomorrow.profile.spin.left, 2);
   } finally {
     await running.close();
+  }
+});
+
+test("GRAM prize: a real win is recorded, paid by the owner, and stops at the budget", async () => {
+  const token = "999:CHICKEN";
+  const file = path.join(os.tmpdir(), `chicken-gram-${process.pid}-${Date.now()}.sqlite`);
+  let win = true;
+  const running = await startServer({
+    port: 0,
+    token,
+    skipEnv: true,
+    bot: false,
+    dbPath: file,
+    adminToken: "secret-admin",
+    gram: () => (win ? 0 : 7),
+  });
+  const initData = sign(
+    {
+      auth_date: String(Math.floor(Date.now() / 1000)),
+      user: JSON.stringify({ id: 805158066, first_name: "Lucky" }),
+    },
+    token,
+  );
+  try {
+    const start = await post(running.url, "/api/session", { initData, create: true });
+    assert.equal(start.spin.gram.left, 5000);
+    assert.equal(start.spin.gram.odds, 20000);
+
+    const won = await post(running.url, "/api/spin", { initData });
+    assert.equal(won.gram, 1);
+    assert.equal(won.reward, 0);
+    assert.equal(won.slice, start.spin.slices.length);
+    assert.equal(won.profile.spin.gram.won, 1);
+    assert.equal(won.profile.spin.gram.left, 4999);
+
+    const bad = await post(running.url, "/api/wallet", { initData, address: "nope" });
+    assert.equal(bad.status, 400);
+    const address = `UQ${"a".repeat(46)}`;
+    const saved = await post(running.url, "/api/wallet", { initData, address });
+    assert.equal(saved.spin.gram.wallet, address);
+
+    const hidden = await fetch(`${running.url}/api/admin/gram?token=wrong`);
+    assert.equal(hidden.status, 404);
+    const list = await (await fetch(`${running.url}/api/admin/gram`, { headers: { "x-admin-token": "secret-admin" } })).json();
+    assert.equal(list.wins.length, 1);
+    assert.equal(list.wins[0].wallet, address);
+    assert.equal(list.wins[0].paidAt, null);
+    const paid = await (
+      await fetch(`${running.url}/api/admin/gram/paid`, {
+        method: "POST",
+        headers: { "x-admin-token": "secret-admin", "content-type": "application/json" },
+        body: JSON.stringify({ id: list.wins[0].id, tx: "abc" }),
+      })
+    ).json();
+    assert.ok(paid.wins[0].paidAt);
+    const after = await post(running.url, "/api/session", { initData });
+    assert.equal(after.spin.gram.unpaid, 0);
+  } finally {
+    await running.close();
+  }
+
+  const db = openDatabase(file);
+  db.prepare("INSERT INTO gram_wins (user_id, amount, won_at) VALUES (?, ?, ?)").run(1, 4999, 0);
+  db.close();
+  const again = await startServer({ port: 0, token, skipEnv: true, bot: false, dbPath: file, gram: () => 0 });
+  try {
+    const empty = await post(again.url, "/api/spin", { initData });
+    assert.equal(empty.gram, 0);
+    assert.ok(empty.reward > 0);
+    assert.equal(empty.profile.spin.gram.left, 0);
+  } finally {
+    await again.close();
+    for (const suffix of ["", "-shm", "-wal"]) fs.rmSync(file + suffix, { force: true });
   }
 });
 
