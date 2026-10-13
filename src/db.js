@@ -52,6 +52,14 @@ CREATE TABLE IF NOT EXISTS gram_wins (
   tx TEXT
 );
 CREATE INDEX IF NOT EXISTS gram_wins_user ON gram_wins (user_id);
+CREATE TABLE IF NOT EXISTS broadcast_sends (
+  name TEXT NOT NULL,
+  user_id INTEGER NOT NULL,
+  ok INTEGER NOT NULL,
+  error TEXT,
+  sent_at INTEGER NOT NULL,
+  PRIMARY KEY (name, user_id)
+);
 CREATE TABLE IF NOT EXISTS pending_referrals (
   user_id INTEGER PRIMARY KEY,
   referrer_id INTEGER NOT NULL

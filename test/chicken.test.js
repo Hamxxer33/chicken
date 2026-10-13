@@ -11,6 +11,7 @@ import { chickenPng } from "../src/icon.js";
 import { ageScore, milestoneBonus, referralShare, scoreParts } from "../src/points.js";
 import { startServer } from "../src/server.js";
 import { openCoop, savePendingReferral, takePendingReferral } from "../src/store.js";
+import { runBroadcast } from "../src/broadcast.js";
 
 const NOW = new Date("2026-09-29T12:00:00Z");
 
@@ -408,6 +409,25 @@ test("GRAM prize: a real win is recorded, paid by the owner, and stops at the bu
     await again.close();
     for (const suffix of ["", "-shm", "-wal"]) fs.rmSync(file + suffix, { force: true });
   }
+});
+
+test("a broadcast reaches each player once, even when run again", async () => {
+  const db = openDatabase(":memory:");
+  for (const id of [2768409, 805158066, 5520018289]) openCoop(db, { id, firstName: "P" }, { now: NOW, create: true });
+  const calls = [];
+  const send = async (method, body) => {
+    calls.push([method, body.chat_id]);
+    if (body.chat_id === 805158066) return { ok: false, description: "Forbidden: bot was blocked by the user" };
+    if (calls.length === 1) return { ok: false, parameters: { retry_after: 0.001 } };
+    return { ok: true };
+  };
+  const quiet = () => {};
+  const first = await runBroadcast({ db, name: "gram-event-1", send, publicUrl: "https://chicken.example", delayMs: 0, log: quiet });
+  assert.deepEqual(first, { sent: 2, failed: 1 });
+  assert.equal(calls[0][0], "sendPhoto");
+  const again = await runBroadcast({ db, name: "gram-event-1", send, publicUrl: "https://chicken.example", delayMs: 0, log: quiet });
+  assert.deepEqual(again, { sent: 0, failed: 0 });
+  db.close();
 });
 
 async function post(base, pathname, body) {
