@@ -1,6 +1,6 @@
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function telegram(token, method, body) {
+export async function telegram(token, method, body) {
   const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: "POST",
     headers: { "content-type": "application/json" },

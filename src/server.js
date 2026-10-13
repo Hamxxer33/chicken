@@ -3,7 +3,8 @@ import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { validateInitData } from "./auth.js";
-import { configureBot, describeBot, isChatMember, startBot } from "./bot.js";
+import { configureBot, describeBot, isChatMember, startBot, telegram } from "./bot.js";
+import { runBroadcast } from "./broadcast.js";
 import { openDatabase, removeTasks } from "./db.js";
 import { chickenPng } from "./icon.js";
 import { RULES } from "./points.js";
@@ -271,6 +272,15 @@ export async function startServer(options = {}) {
           if (referrerId) savePendingReferral(db, from.id, referrerId);
         },
       });
+      const broadcast = process.env.BROADCAST || "";
+      if (broadcast) {
+        runBroadcast({
+          db,
+          name: broadcast,
+          publicUrl: webAppUrl,
+          send: (method, body) => telegram(token, method, body),
+        }).catch((error) => console.error(`Broadcast ${broadcast} stopped: ${error.message}`));
+      }
     } catch (error) {
       console.error(`Telegram bot did not start: ${error.message}`);
     }
