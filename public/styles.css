@@ -300,3 +300,14 @@ h2 { font-size: 32px; }
 @media (prefers-reduced-motion: reduce) {
   .wheel { transition-duration: 0.01s; }
 }
+
+.gram-card { text-align: left; margin: 12px 0 0; border-color: var(--yolk); }
+.wallet-form { display: flex; flex-direction: column; gap: 8px; }
+.wallet-form input {
+  width: 100%;
+  border: 2px solid var(--line);
+  border-radius: 14px;
+  padding: 12px;
+  background: #fff;
+  font-size: 14px;
+}

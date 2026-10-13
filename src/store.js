@@ -26,6 +26,22 @@ function pickSlice(random) {
 
 const secureRandom = () => crypto.randomInt(0, 2 ** 32) / 2 ** 32;
 
+// A real GRAM prize. Each spin has its own `odds` roll, before the points
+// slices, until `budget` GRAM has been won in total. Winners are paid by hand
+// from the owner's wallet; see /api/admin/gram.
+export const GRAM = Object.freeze({ amount: 1, odds: 20_000, budget: 5_000 });
+const gramRoll = () => crypto.randomInt(0, GRAM.odds);
+
+function gramLeft(db) {
+  const won = Number(db.prepare("SELECT COALESCE(SUM(amount), 0) AS sum FROM gram_wins").get().sum);
+  return Math.max(0, GRAM.budget - won);
+}
+
+export function validTonAddress(value) {
+  const s = String(value || "").trim();
+  return /^(EQ|UQ)[A-Za-z0-9_-]{46}$/.test(s) || /^-?\d+:[0-9a-fA-F]{64}$/.test(s);
+}
+
 // Each task pays once. A task with `chat` pays only after Telegram confirms the
 // player is a member, so the bot has to be an admin of that group or channel.
 // A task with `link` can't be checked (X has no free follower lookup), so it
@@ -161,6 +177,10 @@ export function present(db, id, { botUsername = "", now = Date.now() } = {}) {
   const spinsToday = Number(
     db.prepare("SELECT COUNT(*) AS n FROM spins WHERE user_id = ? AND day = ?").get(id, day(now)).n,
   );
+  const gramWins = db
+    .prepare("SELECT amount, paid_at FROM gram_wins WHERE user_id = ?")
+    .all(id)
+    .map((row) => ({ amount: Number(row.amount), paid: row.paid_at !== null }));
   const tasks = TASKS.map((task) => {
     const days = task.daily
       ? [...done.keys()].filter((key) => key.startsWith(`${task.id}:`)).length
@@ -219,6 +239,14 @@ export function present(db, id, { botUsername = "", now = Date.now() } = {}) {
       left: Math.max(0, SPINS_PER_DAY - spinsToday),
       perDay: SPINS_PER_DAY,
       slices: SLICES.map((slice) => slice.reward),
+      gram: {
+        amount: GRAM.amount,
+        odds: GRAM.odds,
+        left: gramLeft(db),
+        won: gramWins.reduce((sum, win) => sum + win.amount, 0),
+        unpaid: gramWins.filter((win) => !win.paid).reduce((sum, win) => sum + win.amount, 0),
+        wallet: user.wallet || "",
+      },
     },
   };
 }
@@ -372,7 +400,11 @@ export function claimTask(db, userId, taskId, { botUsername = "", now = Date.now
   return present(db, userId, { botUsername, now });
 }
 
-export function spin(db, userId, { botUsername = "", now = Date.now(), random = secureRandom } = {}) {
+export function spin(
+  db,
+  userId,
+  { botUsername = "", now = Date.now(), random = secureRandom, gram = gramRoll } = {},
+) {
   if (!getUser(db, userId)) {
     const error = new Error("Open the coop first.");
     error.status = 404;
@@ -387,10 +419,79 @@ export function spin(db, userId, { botUsername = "", now = Date.now(), random = 
     error.status = 400;
     throw error;
   }
-  const index = pickSlice(random);
-  const reward = SLICES[index].reward;
-  db.prepare(
-    "INSERT INTO spins (user_id, day, n, reward, created_at) VALUES (?, ?, ?, ?, ?)",
-  ).run(userId, today, used + 1, reward, now);
-  return { slice: index, reward, profile: present(db, userId, { botUsername, now }) };
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const wonGram = gramLeft(db) >= GRAM.amount && gram() === 0;
+    const index = wonGram ? SLICES.length : pickSlice(random);
+    const reward = wonGram ? 0 : SLICES[index].reward;
+    db.prepare(
+      "INSERT INTO spins (user_id, day, n, reward, created_at) VALUES (?, ?, ?, ?, ?)",
+    ).run(userId, today, used + 1, reward, now);
+    if (wonGram) {
+      db.prepare("INSERT INTO gram_wins (user_id, amount, won_at) VALUES (?, ?, ?)").run(
+        userId,
+        GRAM.amount,
+        now,
+      );
+    }
+    db.exec("COMMIT");
+    return {
+      slice: index,
+      reward,
+      gram: wonGram ? GRAM.amount : 0,
+      profile: present(db, userId, { botUsername, now }),
+    };
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+export function saveWallet(db, userId, address, options = {}) {
+  const trimmed = String(address || "").trim();
+  if (!validTonAddress(trimmed)) {
+    const error = new Error("That is not a GRAM (TON) wallet address.");
+    error.status = 400;
+    throw error;
+  }
+  if (!getUser(db, userId)) {
+    const error = new Error("Open the coop first.");
+    error.status = 404;
+    throw error;
+  }
+  db.prepare("UPDATE users SET wallet = ? WHERE id = ?").run(trimmed, userId);
+  return present(db, userId, options);
+}
+
+export function listGramWins(db) {
+  return db
+    .prepare(
+      `SELECT g.id, g.user_id, u.username, u.first_name, u.wallet, g.amount, g.won_at, g.paid_at, g.tx
+       FROM gram_wins g JOIN users u ON u.id = g.user_id
+       ORDER BY g.paid_at IS NOT NULL, g.won_at`,
+    )
+    .all()
+    .map((row) => ({
+      id: Number(row.id),
+      userId: Number(row.user_id),
+      username: row.username,
+      name: row.first_name,
+      wallet: row.wallet || "",
+      amount: Number(row.amount),
+      wonAt: new Date(Number(row.won_at)).toISOString(),
+      paidAt: row.paid_at === null ? null : new Date(Number(row.paid_at)).toISOString(),
+      tx: row.tx || "",
+    }));
+}
+
+export function markGramPaid(db, id, tx, now = Date.now()) {
+  const result = db
+    .prepare("UPDATE gram_wins SET paid_at = ?, tx = ? WHERE id = ? AND paid_at IS NULL")
+    .run(now, String(tx || ""), Number(id));
+  if (!Number(result.changes)) {
+    const error = new Error("No unpaid win with that id.");
+    error.status = 404;
+    throw error;
+  }
+  return listGramWins(db);
 }

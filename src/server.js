@@ -7,9 +7,13 @@ import { configureBot, describeBot, isChatMember, startBot } from "./bot.js";
 import { openDatabase, removeTasks } from "./db.js";
 import { chickenPng } from "./icon.js";
 import { RULES } from "./points.js";
+import crypto from "node:crypto";
 import {
   RETIRED_TASKS,
   claimTask,
+  listGramWins,
+  markGramPaid,
+  saveWallet,
   findTask,
   openCoop,
   openTask,
@@ -117,6 +121,7 @@ export async function startServer(options = {}) {
   fs.writeFileSync(path.join(publicDir, "icon.png"), chickenPng());
 
   const viewOptions = () => ({ botUsername });
+  const adminToken = options.adminToken ?? process.env.ADMIN_TOKEN ?? "";
   const checkMember = options.checkMember ?? ((chat, userId) => isChatMember(token, chat, userId));
 
   async function confirmJoined(task, userId) {
@@ -186,14 +191,33 @@ export async function startServer(options = {}) {
       if (req.method === "POST" && url.pathname === "/api/spin") {
         const body = await readBody(req);
         const { profile } = await identity(body);
-        return send(
-          res,
-          spin(db, profile.id, {
-            ...viewOptions(),
-            now: options.now?.() ?? Date.now(),
-            ...(options.random ? { random: options.random } : {}),
-          }),
-        );
+        const result = spin(db, profile.id, {
+          ...viewOptions(),
+          now: options.now?.() ?? Date.now(),
+          ...(options.random ? { random: options.random } : {}),
+          ...(options.gram ? { gram: options.gram } : {}),
+        });
+        if (result.gram) console.log(`GRAM win: user ${profile.id} won ${result.gram} GRAM.`);
+        return send(res, result);
+      }
+      if (req.method === "POST" && url.pathname === "/api/wallet") {
+        const body = await readBody(req);
+        const { profile } = await identity(body);
+        return send(res, saveWallet(db, profile.id, body.address, viewOptions()));
+      }
+      if (url.pathname.startsWith("/api/admin/")) {
+        const given = Buffer.from(String(req.headers["x-admin-token"] || url.searchParams.get("token") || ""));
+        const want = Buffer.from(adminToken);
+        if (!adminToken || given.length !== want.length || !crypto.timingSafeEqual(given, want)) {
+          fail(404, "Not found.");
+        }
+        if (req.method === "GET" && url.pathname === "/api/admin/gram") {
+          return send(res, { wins: listGramWins(db) });
+        }
+        if (req.method === "POST" && url.pathname === "/api/admin/gram/paid") {
+          const body = await readBody(req);
+          return send(res, { wins: markGramPaid(db, body.id, body.tx) });
+        }
       }
       if (req.method === "POST" && url.pathname === "/api/task/open") {
         const body = await readBody(req);
