@@ -2,6 +2,8 @@ const state = {
   tg: window.Telegram?.WebApp,
   config: null,
   profile: null,
+  wheelTurn: 0,
+  spinning: false,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -103,7 +105,7 @@ function showMain(tab, animate) {
 }
 
 function setTab(name) {
-  for (const id of ["home", "tasks", "friends"]) {
+  for (const id of ["home", "tasks", "spin", "friends"]) {
     $(`#panel-${id}`).hidden = id !== name;
     const button = $(`.tab[data-tab="${id}"]`);
     if (id === name) button.setAttribute("aria-current", "page");
@@ -144,6 +146,7 @@ function render() {
       ${row("Friends", scores.referrals)}
       ${row("Every 5 friends", scores.milestone)}
       ${row("Tasks", scores.tasks)}
+      ${row("Spins", scores.spins)}
     </div>
     <p class="note">Chicken points live in this coop. They are not a listed coin.</p>
   `;
@@ -183,6 +186,8 @@ function render() {
         )
         .join("")
     : `<p class="note">The coop is quiet. Invite someone who already uses Telegram.</p>`;
+  renderSpin();
+
   $("#panel-friends").innerHTML = `
     <article class="card">
       <h3>Every 5 friends: ${fmt(state.config.rules.milestoneBonus)}</h3>
@@ -198,6 +203,72 @@ function render() {
   `;
 }
 
+const WHEEL_COLORS = ["#f0b429", "#fff6e4", "#f6d68a", "#e23d32", "#fff6e4", "#2f6b45"];
+const WHEEL_TEXT = ["#2a1b10", "#2a1b10", "#2a1b10", "#fff6e4", "#2a1b10", "#fff6e4"];
+
+function wheelSvg(slices) {
+  const size = slices.length;
+  const step = (Math.PI * 2) / size;
+  const point = (angle, radius) => [100 + radius * Math.sin(angle), 100 - radius * Math.cos(angle)];
+  const parts = slices.map((reward, index) => {
+    const [x1, y1] = point(index * step, 98);
+    const [x2, y2] = point((index + 1) * step, 98);
+    const mid = (index + 0.5) * step;
+    const [tx, ty] = point(mid, 66);
+    const degrees = (mid * 180) / Math.PI;
+    return `
+      <path d="M100 100 L${x1} ${y1} A98 98 0 0 1 ${x2} ${y2} Z" fill="${WHEEL_COLORS[index % WHEEL_COLORS.length]}" stroke="#2a1b10" stroke-width="2" />
+      <text x="${tx}" y="${ty}" text-anchor="middle" dominant-baseline="middle" transform="rotate(${degrees} ${tx} ${ty})" style="fill:${WHEEL_TEXT[index % WHEEL_TEXT.length]}">${fmt(reward)}</text>`;
+  });
+  return `<svg class="wheel" id="wheel" viewBox="0 0 200 200" style="transform: rotate(${state.wheelTurn}deg)">
+    <circle cx="100" cy="100" r="99" fill="#2a1b10" />${parts.join("")}</svg>`;
+}
+
+function renderSpin() {
+  const { spin } = state.profile;
+  const left = spin.left;
+  $("#panel-spin").innerHTML = `
+    <div class="spin">
+      <h2>Spin and win</h2>
+      <p class="note">${spin.perDay} free spins a day. Every spin pays Chicken points.</p>
+      <div class="wheel-wrap">
+        <span class="pointer" aria-hidden="true"></span>
+        ${wheelSvg(spin.slices)}
+        <span class="hub" aria-hidden="true"><svg><use href="#chicken" /></svg></span>
+      </div>
+      <button class="yolk" type="button" data-action="spin" ${left && !state.spinning ? "" : "disabled"}>
+        ${left ? "Spin" : "Come back tomorrow"}
+      </button>
+      <p class="spin-left">${left === 1 ? "1 spin left today" : `${left} spins left today`}</p>
+    </div>`;
+}
+
+async function doSpin() {
+  if (state.spinning) return;
+  state.spinning = true;
+  renderSpin();
+  try {
+    const result = await api("/api/spin", authBody());
+    const size = state.profile.spin.slices.length;
+    const center = (result.slice + 0.5) * (360 / size);
+    const current = ((state.wheelTurn % 360) + 360) % 360;
+    const target = (360 - center + 360) % 360;
+    state.wheelTurn += 360 * 5 + ((target - current + 360) % 360);
+    $("#wheel").style.transform = `rotate(${state.wheelTurn}deg)`;
+    state.tg?.HapticFeedback?.impactOccurred?.("medium");
+    await sleep(3700);
+    state.profile = result.profile;
+    state.spinning = false;
+    render();
+    state.tg?.HapticFeedback?.notificationOccurred("success");
+    toast(`+${fmt(result.reward)} Chicken`);
+  } catch (error) {
+    state.spinning = false;
+    renderSpin();
+    toast(error.message);
+  }
+}
+
 function row(label, value) {
   return `<div class="row"><span>${label}</span><b>${fmt(value)}</b></div>`;
 }
@@ -207,7 +278,9 @@ async function onMainClick(event) {
   if (!button || button.disabled) return;
   const action = button.dataset.action;
   try {
-    if (action === "claim") {
+    if (action === "spin") {
+      await doSpin();
+    } else if (action === "claim") {
       state.profile = await api("/api/task", { ...authBody(), taskId: button.dataset.task });
       render();
       toast("Collected.");

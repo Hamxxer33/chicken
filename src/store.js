@@ -1,5 +1,30 @@
 import { ageLabel, estimateJoined } from "./age.js";
+import crypto from "node:crypto";
 import { RULES, milestoneBonus, referralShare, scoreParts } from "./points.js";
+
+// Spin and win: every slice pays points, so every spin is a win of some size.
+// `weight` is how often each slice comes up relative to the others.
+export const SPINS_PER_DAY = 3;
+export const SLICES = [
+  { reward: 100, weight: 30 },
+  { reward: 250, weight: 25 },
+  { reward: 150, weight: 20 },
+  { reward: 500, weight: 13 },
+  { reward: 200, weight: 8 },
+  { reward: 1_000, weight: 4 },
+];
+
+function pickSlice(random) {
+  const total = SLICES.reduce((sum, slice) => sum + slice.weight, 0);
+  let roll = random() * total;
+  for (let index = 0; index < SLICES.length; index += 1) {
+    roll -= SLICES[index].weight;
+    if (roll < 0) return index;
+  }
+  return 0;
+}
+
+const secureRandom = () => crypto.randomInt(0, 2 ** 32) / 2 ** 32;
 
 // Each task pays once. A task with `chat` pays only after Telegram confirms the
 // player is a member, so the bot has to be an admin of that group or channel.
@@ -130,6 +155,12 @@ export function present(db, id, { botUsername = "", now = Date.now() } = {}) {
   const referralSum = friends.reduce((sum, friend) => sum + friend.share, 0);
   const milestone = milestoneBonus(friends.length);
   const taskSum = [...done.values()].reduce((sum, reward) => sum + reward, 0);
+  const spinSum = Number(
+    db.prepare("SELECT COALESCE(SUM(reward), 0) AS sum FROM spins WHERE user_id = ?").get(id).sum,
+  );
+  const spinsToday = Number(
+    db.prepare("SELECT COUNT(*) AS n FROM spins WHERE user_id = ? AND day = ?").get(id, day(now)).n,
+  );
   const tasks = TASKS.map((task) => {
     const days = task.daily
       ? [...done.keys()].filter((key) => key.startsWith(`${task.id}:`)).length
@@ -166,13 +197,15 @@ export function present(db, id, { botUsername = "", now = Date.now() } = {}) {
       referrals: referralSum,
       milestone,
       tasks: taskSum,
+      spins: spinSum,
       total:
         user.age_score +
         user.premium_score +
         user.og_score +
         referralSum +
         milestone +
-        taskSum,
+        taskSum +
+        spinSum,
     },
     friends: {
       count: friends.length,
@@ -182,6 +215,11 @@ export function present(db, id, { botUsername = "", now = Date.now() } = {}) {
       list: friends,
     },
     tasks,
+    spin: {
+      left: Math.max(0, SPINS_PER_DAY - spinsToday),
+      perDay: SPINS_PER_DAY,
+      slices: SLICES.map((slice) => slice.reward),
+    },
   };
 }
 
@@ -332,4 +370,27 @@ export function claimTask(db, userId, taskId, { botUsername = "", now = Date.now
     ).run(userId, key, task.reward, now);
   }
   return present(db, userId, { botUsername, now });
+}
+
+export function spin(db, userId, { botUsername = "", now = Date.now(), random = secureRandom } = {}) {
+  if (!getUser(db, userId)) {
+    const error = new Error("Open the coop first.");
+    error.status = 404;
+    throw error;
+  }
+  const today = day(now);
+  const used = Number(
+    db.prepare("SELECT COUNT(*) AS n FROM spins WHERE user_id = ? AND day = ?").get(userId, today).n,
+  );
+  if (used >= SPINS_PER_DAY) {
+    const error = new Error("No spins left today. Come back tomorrow.");
+    error.status = 400;
+    throw error;
+  }
+  const index = pickSlice(random);
+  const reward = SLICES[index].reward;
+  db.prepare(
+    "INSERT INTO spins (user_id, day, n, reward, created_at) VALUES (?, ?, ?, ?, ?)",
+  ).run(userId, today, used + 1, reward, now);
+  return { slice: index, reward, profile: present(db, userId, { botUsername, now }) };
 }

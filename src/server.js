@@ -13,6 +13,7 @@ import {
   findTask,
   openCoop,
   openTask,
+  spin,
   savePendingReferral,
   takePendingReferral,
 } from "./store.js";
@@ -181,6 +182,18 @@ export async function startServer(options = {}) {
       }
       if (req.method === "POST" && url.pathname === "/api/session") {
         return send(res, await session(await readBody(req)));
+      }
+      if (req.method === "POST" && url.pathname === "/api/spin") {
+        const body = await readBody(req);
+        const { profile } = await identity(body);
+        return send(
+          res,
+          spin(db, profile.id, {
+            ...viewOptions(),
+            now: options.now?.() ?? Date.now(),
+            ...(options.random ? { random: options.random } : {}),
+          }),
+        );
       }
       if (req.method === "POST" && url.pathname === "/api/task/open") {
         const body = await readBody(req);

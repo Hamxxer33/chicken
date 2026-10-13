@@ -334,6 +334,53 @@ test("old X post tasks are removed on start and other tasks stay", async () => {
   assert.deepEqual(left.map((row) => [row.task_id, Number(row.reward)]), [["group", 3000], ["x", 6000]]);
 });
 
+test("spin pays points three times a day and the server picks the slice", async () => {
+  const token = "999:CHICKEN";
+  let clock = Date.parse("2026-10-13T10:00:00Z");
+  const rolls = [0, 0.999, 0.5, 0.2];
+  const running = await startServer({
+    port: 0,
+    token,
+    skipEnv: true,
+    bot: false,
+    dbPath: ":memory:",
+    now: () => clock,
+    random: () => rolls.shift() ?? 0,
+  });
+  const initData = sign(
+    {
+      auth_date: String(Math.floor(Date.now() / 1000)),
+      user: JSON.stringify({ id: 1974255900, first_name: "Spin" }),
+    },
+    token,
+  );
+  try {
+    const start = await post(running.url, "/api/session", { initData, create: true });
+    assert.equal(start.spin.left, 3);
+    assert.ok(start.spin.slices.every((reward) => reward > 0));
+
+    const first = await post(running.url, "/api/spin", { initData, slice: 5, reward: 1_000_000 });
+    assert.equal(first.slice, 0);
+    assert.equal(first.reward, start.spin.slices[0]);
+    const second = await post(running.url, "/api/spin", { initData });
+    assert.equal(second.slice, start.spin.slices.length - 1);
+    const third = await post(running.url, "/api/spin", { initData });
+    assert.equal(third.profile.spin.left, 0);
+    const total = first.reward + second.reward + third.reward;
+    assert.equal(third.profile.scores.spins, total);
+    assert.equal(third.profile.scores.total, start.scores.total + total);
+
+    const fourth = await post(running.url, "/api/spin", { initData });
+    assert.equal(fourth.status, 400);
+
+    clock += 24 * 60 * 60 * 1000;
+    const tomorrow = await post(running.url, "/api/spin", { initData });
+    assert.equal(tomorrow.profile.spin.left, 2);
+  } finally {
+    await running.close();
+  }
+});
+
 async function post(base, pathname, body) {
   const response = await fetch(`${base}${pathname}`, {
     method: "POST",
