@@ -35,6 +35,14 @@ CREATE TABLE IF NOT EXISTS task_opens (
   opened_at INTEGER NOT NULL,
   PRIMARY KEY (user_id, task_id)
 );
+CREATE TABLE IF NOT EXISTS spins (
+  user_id INTEGER NOT NULL,
+  day TEXT NOT NULL,
+  n INTEGER NOT NULL,
+  reward INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, day, n)
+);
 CREATE TABLE IF NOT EXISTS pending_referrals (
   user_id INTEGER PRIMARY KEY,
   referrer_id INTEGER NOT NULL
